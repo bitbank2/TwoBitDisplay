@@ -815,7 +815,7 @@ int tbdScrollBuffer(TBDISP *pTBD, int iStartCol, int iEndCol, int iStartRow, int
 void tbdSetPosition(TBDISP *pTBD, int x, int y, int bRender)
 {
 unsigned char buf[4];
-int iPitch = pTBD->width/4;
+int iPitch = pTBD->width;
 
 //  tbdCachedFlush(pTBD, bRender); // flush any cached data first
     
@@ -847,8 +847,8 @@ void tbdWriteDataBlock(TBDISP *pTBD, unsigned char *ucBuf, int iLen, int bRender
 unsigned char ucTemp[196];
 int iPitch, iBufferSize;
 
-  iPitch = pTBD->width/4;
-  iBufferSize = iPitch * pTBD->height;
+  iPitch = pTBD->width;
+  iBufferSize = iPitch * (pTBD->height/4);
 
 // Keep a copy in local buffer
 if (pTBD->ucScreen && (iLen + pTBD->iScreenOffset) <= iBufferSize)
@@ -1195,52 +1195,29 @@ unsigned char uc, ucOld;
 int iPitch, iSize;
 
   iPitch = pTBD->width;
-  iSize = iPitch * (pTBD->height/8);
+  iSize = iPitch * (pTBD->height/4);
 
-  i = ((y >> 3) * iPitch) + x;
+  i = ((y >> 2) * iPitch) + x;
   if (i < 0 || i > iSize-1) // off the screen
     return -1;
-  tbdSetPosition(pTBD, x, y>>3, bRender);
+  tbdSetPosition(pTBD, x, y>>2, bRender);
 
   if (pTBD->ucScreen)
     uc = ucOld = pTBD->ucScreen[i];
-  else if (pTBD->type == OLED_132x64 || pTBD->type == OLED_128x128) // SH1106/SH1107 can read data
+  else
   {
-    uint8_t ucTemp[3];
-     ucTemp[0] = 0x80; // one command
-     ucTemp[1] = 0xE0; // read_modify_write
-     ucTemp[2] = 0xC0; // one data
-     _I2CWrite(pTBD, ucTemp, 3);
-
+      uint8_t ucTemp[4];
      // read a dummy byte followed by the data byte we want
-     I2CRead(&pTBD->bbi2c, pTBD->oled_addr, ucTemp, 2);
+     I2CRead(&pTBD->bbi2c, pTBD->oled_addr+1, ucTemp, 2);
      uc = ucOld = ucTemp[1]; // first byte is garbage
   }
-  else
-     uc = ucOld = 0;
 
-  uc &= ~(0x1 << (y & 7));
-  if (ucColor)
-  {
-    uc |= (0x1 << (y & 7));
-  }
+    uc &= ~(0x3 << ((y & 3)*2));
+    uc |= (ucColor << ((y & 3)*2));
   if (uc != ucOld) // pixel changed
   {
 //    tbdSetPosition(x, y>>3);
-    if (pTBD->ucScreen)
-    {
       tbdWriteDataBlock(pTBD, &uc, 1, bRender);
-      pTBD->ucScreen[i] = uc;
-    }
-    else if (pTBD->type == OLED_132x64 || pTBD->type == OLED_128x128) // end the read_modify_write operation
-    {
-      uint8_t ucTemp[4];
-      ucTemp[0] = 0xc0; // one data
-      ucTemp[1] = uc;   // actual data
-      ucTemp[2] = 0x80; // one command
-      ucTemp[3] = 0xEE; // end read_modify_write operation
-      _I2CWrite(pTBD, ucTemp, 4);
-    }
   }
   return 0;
 } /* tbdSetPixel() */
@@ -1361,7 +1338,7 @@ void tbdSetTextWrap(TBDISP *pTBD, int bWrap)
 // To draw at 1x scale, set the scale factor to 256. To draw at 2x, use 512
 // The output must be drawn into a memory buffer, not directly to the display
 //
-int tbdScaledString(TBDISP *pTBD, int x, int y, char *szMsg, int iSize, int bInvert, int iXScale, int iYScale, int iRotation)
+int tbdScaledString(TBDISP *pTBD, int x, int y, char *szMsg, int iSize, int ucColor, int iXScale, int iYScale, int iRotation)
 {
 uint32_t row, col, dx, dy;
 uint32_t sx, sy;
@@ -1389,7 +1366,6 @@ int iFontWidth;
       // we can't directly use the pointer to FLASH memory, so copy to a local buffer
       ucTemp[0] = 0; // first column is blank
       memcpy_P(&ucTemp[1], &s[iFontOff], iFontWidth-1);
-      if (bInvert) InvertBytes(ucTemp, iFontWidth);
       col = 0;
       for (tx=0; tx<(int)dx; tx++) {
          row = 0;
@@ -1418,11 +1394,11 @@ int iFontWidth;
             } // switch on rotation direction
             // plot the pixel if it's within the image boundaries
             if (nx >= 0 && ny >= 0 && nx < pTBD->width && ny < pTBD->height) {
-               d = &pTBD->ucScreen[(ny >> 3) * iPitch + nx];
-               if (color)
-                  d[0] |= (1 << (ny & 7));
-               else
-                  d[0] &= ~(1 << (ny & 7));
+               d = &pTBD->ucScreen[(ny >> 2) * iPitch + nx];
+                if (color) {
+                    d[0] &= ~(3 << ((ny & 3)*2));
+                    d[0] |= (ucColor << ((ny & 3)*2));
+                }
             }
             row += sy; // add fractional increment to source row of character
          } // for ty
@@ -1787,9 +1763,9 @@ int iPitch;
           dy = 0;
       }
       for (ty=dy; ty<end_y && ty < pTBD->height; ty++) {
-         ucMask = 1<<(ty & 7); // destination bit number for this line
-         ucClr = (ucColor) ? ucMask : 0;
-         d = &pTBD->ucScreen[(ty >> 3) * iPitch + dx]; // internal buffer dest
+         ucMask = 3<<((ty & 3)*2); // destination bit number for this line
+         ucClr = ucColor << ((ty & 3)*2);
+         d = &pTBD->ucScreen[(ty >> 2) * iPitch + dx]; // internal buffer dest
          for (tx=0; tx<pGlyph->width; tx++) {
             if (uc == 0) { // need to read more font data
                tx += bits; // skip any remaining 0 bits
@@ -1807,16 +1783,14 @@ int iPitch;
                      continue; // exit this character cleanly
                   }
                   // need to recalculate mask and offset in case Y changed
-                  ucMask = 1<<(ty & 7); // destination bit number for this line
-                  ucClr = (ucColor) ? ucMask : 0;
-                  d = &pTBD->ucScreen[(ty >> 3) * iPitch + dx]; // internal buffer dest
+                  ucMask = 3<<((ty & 3)*2); // destination bits number for this line
+                   ucClr = (ucColor << ((ty & 3) * 2));
+                  d = &pTBD->ucScreen[(ty >> 2) * iPitch + dx]; // internal buffer dest
                }
             } // if we ran out of bits
             if (uc & 0x80) { // set pixel
-               if (ucClr)
-                  d[tx] |= ucMask;
-               else
-                  d[tx] &= ~ucMask;
+                d[tx] &= ~ucMask;
+                d[tx] |= ucClr;
             }
             bits--; // next bit
             uc <<= 1;
@@ -1883,7 +1857,7 @@ uint8_t iLines;
 // This allows you to manage the RAM used by ss_oled on tiny
 // embedded platforms like the ATmega series
 // Pass NULL to revoke the buffer. Make sure you provide a buffer
-// large enough for your display (e.g. 128x64 needs 1K - 1024 bytes)
+// large enough for your display (e.g. 128x128 needs 4K bytes)
 //
 void tbdSetBackBuffer(TBDISP *pTBD, uint8_t *pBuffer)
 {

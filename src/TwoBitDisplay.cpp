@@ -49,7 +49,7 @@ const unsigned char uc1617s_initbuf[] PROGMEM = {
       0x2b, // panel loading (13-18nf)
       0x2f, // internal pump control
       0xeb, // bias = 1/11
-      0x81, 0x28, // contrast = 40/64
+      0x81, 0x2e, // contrast = 46/64
       0xf1, 0x7f, // set COM end
       0xf2, 0x00, // display line start
       0xf3, 0x7f, // display line end
@@ -835,31 +835,16 @@ uint8_t *pSrc = pTBD->ucScreen;
   if (pBuffer == NULL)
     return; // no backbuffer and no provided buffer
   
-  if (pTBD->type >= SHARP_144x168) // special case for Sharp Memory LCD
-  {
-    SharpDumpBuffer(pTBD, pBuffer);
-    return;
-  }
-  iLines = pTBD->height >> 3;
+  iLines = pTBD->height >> 2;
   iCols = pTBD->width >> 4;
   for (y=0; y<iLines; y++)
   {
-    bNeedPos = 1; // start of a new line means we need to set the position too
     for (x=0; x<iCols; x++) // wiring library has a 32-byte buffer, so send 16 bytes so that the data prefix (0x40) can fit
     {
       if (pTBD->ucScreen == NULL || pBuffer == pSrc || memcmp(pSrc, pBuffer, 16) != 0) // doesn't match, need to send it
       {
-        if (bNeedPos) // need to reposition output cursor?
-        {
-           bNeedPos = 0;
-           tbdCachedFlush(pTBD, 1);
-           tbdSetPosition(pTBD, x*16, y, 1);
-        }
-        tbdCachedWrite(pTBD, pBuffer, 16, 1);
-      }
-      else
-      {
-         bNeedPos = 1; // we're skipping a block, so next time will need to set the new position
+        tbdSetPosition(pTBD, x*16, y, 1);
+        tbdWriteDataBlock(pTBD, pBuffer, 16, 1);
       }
       pSrc += 16;
       pBuffer += 16;
@@ -867,6 +852,5 @@ uint8_t *pSrc = pTBD->ucScreen;
     pSrc += (iPitch - pTBD->width); // for narrow displays, skip to the next line
     pBuffer += (iPitch - pTBD->width);
   } // for y
-  tbdCachedFlush(pTBD, 1);
 } /* tbdDumpBuffer() */
 

@@ -235,7 +235,7 @@ int tbdWriteString(TBDISP *pTBD, int x, int y, char *szMsg, int iSize, int iFGCo
 // The output must be drawn into a memory buffer, not directly to the display
 // The string can be drawn in one of 4 rotations (ROT_0, ROT_90, ROT_180, ROT_270)
 //
-int tbdScaledString(TBDISP *pTBD, int x, int y, char *szMsg, int iSize, int bInvert, int iXScale, int iYScale, int iRotation);
+int tbdScaledString(TBDISP *pTBD, int x, int y, char *szMsg, int iSize, int ucColor, int iXScale, int iYScale, int iRotation);
 //
 // Draw a string in a proportional font you supply
 // Requires a back buffer
