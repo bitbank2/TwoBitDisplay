@@ -878,7 +878,7 @@ if (pTBD->type == LCD_VIRTUAL || pTBD->type >= SHARP_144x168)
       }
       else // I2C
       {
-          if (pTBD->type == LCD_UC1617S) { // special case for I2C LCD
+          if (pTBD->type == LCD_UC1617S_128128 || pTBD->type == LCD_UC1617S_12896) { // special case for I2C LCD
             pTBD->oled_addr |= 1;
             _I2CWrite(pTBD, ucBuf, iLen);
             pTBD->oled_addr &= ~1;
@@ -1431,6 +1431,29 @@ static void SetGrayPixel(uint8_t *pDest, int x, int y, uint8_t iFG)
     pDest[iOff] &= ~(3 << y);
     pDest[iOff] |= (iFG << y);
 } /* SetGrayPixel() */
+static void ExpandFont(uint8_t *ucChar, uint8_t *ucTemp, int iLen, int ty, int iFG, int iBG)
+{
+    int j;
+    uint8_t ucBits;
+    
+    for (j=0; j<iLen; j++) {
+        // do the 4 pixels of each byte explicitly
+        ucBits = 0;
+        if (ucChar[j] & (1<<ty)) { // FG pixel
+            ucBits |= iFG;
+        } else { ucBits |= iBG; }
+        if (ucChar[j] & (2<<ty)) { // FG pixel
+            ucBits |= (iFG<<2);
+        } else { ucBits |= (iBG<<2); }
+        if (ucChar[j] & (4<<ty)) { // FG pixel
+            ucBits |= (iFG<<4);
+        } else { ucBits |= (iBG<<4); }
+        if (ucChar[j] & (8<<ty)) { // FG pixel
+            ucBits |= (iFG<<6);
+        } else { ucBits |= (iBG<<6); }
+        ucTemp[j] = ucBits;
+    } // for j
+} /* ExpandFont() */
 //
 // Draw a string of normal (8x8), small (6x8) or large (16x32) characters
 // At the given col+row
@@ -1470,23 +1493,8 @@ unsigned char c, *s, ucChar[16], ucTemp[128];
                 if (tx + iLen > pTBD->width) // clip right edge
                     iLen = pTBD->width - tx;
                 // Capture the bits and turn them into the requested gray level in the output
-                for (j=0; j<iLen; j++) {
-                    // do the 4 pixels of each byte explicitly
-                    ucBits = 0;
-                    if (ucChar[j] & (1<<ty)) { // FG pixel
-                        ucBits |= iFG;
-                    } else { ucBits |= iBG; }
-                    if (ucChar[j] & (2<<ty)) { // FG pixel
-                        ucBits |= (iFG<<2);
-                    } else { ucBits |= (iBG<<2); }
-                    if (ucChar[j] & (4<<ty)) { // FG pixel
-                        ucBits |= (iFG<<4);
-                    } else { ucBits |= (iBG<<4); }
-                    if (ucChar[j] & (8<<ty)) { // FG pixel
-                        ucBits |= (iFG<<6);
-                    } else { ucBits |= (iBG<<6); }
-                    ucTemp[iOff++] = ucBits;
-                } // for j
+                ExpandFont(ucChar, &ucTemp[iOff], iLen, ty, iFG, iBG);
+                iOff += iLen;
                 tx += iLen;
 #ifdef FUTURE
                 if (pTBD->iCursorX >= pTBD->width-iCharWidth && pTBD->wrap) // word wrap enabled?
@@ -1512,65 +1520,58 @@ unsigned char c, *s, ucChar[16], ucTemp[128];
 //       tbdCachedFlush(pTBD, bRender); // write any remaining data
        return 0;
     } // 8x8
-#ifdef FUTURE
     else if (iSize == FONT_16x32)
     {
       i = 0;
 //      iFontSkip = iScroll & 15; // number of columns to initially skip
-      while (pTBD->iCursorX < pTBD->width && pTBD->iCursorY < (pTBD->height / 8)-3 && szMsg[i] != 0)
+      while (pTBD->iCursorX < pTBD->width && pTBD->iCursorY < (pTBD->height / 4)-3 && szMsg[i] != 0)
       {
-//          if (iScroll < 16) // if characters are visible
-          {
               s = (unsigned char *)&ucBigFont[(unsigned char)(szMsg[i]-32)*64];
-//              iLen = 16 - iFontSkip;
+              iLen = 16;
               if (pTBD->iCursorX + iLen > pTBD->width) // clip right edge
                   iLen = pTBD->width - pTBD->iCursorX;
               // we can't directly use the pointer to FLASH memory, so copy to a local buffer
-              tbdSetPosition(pTBD, pTBD->iCursorX, pTBD->iCursorY, bRender);
-              memcpy_P(ucTemp, s, 16);
-//              if (bInvert) InvertBytes(ucTemp, 16);
-              tbdWriteDataBlock(pTBD, &ucTemp[iFontSkip], iLen, bRender); // write character pattern
-              tbdSetPosition(pTBD, pTBD->iCursorX, pTBD->iCursorY+1, bRender);
-              memcpy_P(ucTemp, s+16, 16);
-              if (bInvert) InvertBytes(ucTemp, 16);
-              tbdWriteDataBlock(pTBD, &ucTemp[iFontSkip], iLen, bRender); // write character pattern
-//              if (pTBD->iCursorY <= 5)
-              {
-                 tbdSetPosition(pTBD, pTBD->iCursorX, pTBD->iCursorY+2, bRender);
-                 memcpy_P(ucTemp, s+32, 16);
-                 if (bInvert) InvertBytes(ucTemp, 16);
-                 tbdWriteDataBlock(pTBD, &ucTemp[iFontSkip], iLen, bRender); // write character pattern
-              }
-//              if (pTBD->iCursorY <= 4)
-              {
-                 tbdSetPosition(pTBD, pTBD->iCursorX, pTBD->iCursorY+3, bRender);
-                 memcpy_P(ucTemp, s+48, 16);
-                 if (bInvert) InvertBytes(ucTemp, 16);
-                 tbdWriteDataBlock(pTBD, &ucTemp[iFontSkip], iLen, bRender); // write character pattern
-              }
+              memcpy_P(ucChar, s, 16);
+          // expand the pixels with the current colors
+          for (ty=0; ty < 8; ty+=4) {
+              ExpandFont(ucChar, ucTemp, 16, ty, iFG, iBG);
+              tbdSetPosition(pTBD, pTBD->iCursorX, pTBD->iCursorY+(ty/4), bRender);
+              tbdWriteDataBlock(pTBD, ucTemp, iLen, bRender); // write character pattern
+          }
+              memcpy_P(ucChar, s+16, 16);
+          for (ty=0; ty < 8; ty+=4) {
+              ExpandFont(ucChar, ucTemp, 16, ty, iFG, iBG);
+              tbdSetPosition(pTBD, pTBD->iCursorX, pTBD->iCursorY+2+(ty/4), bRender);
+              tbdWriteDataBlock(pTBD, ucTemp, iLen, bRender); // write character pattern
+          }
+                memcpy_P(ucChar, s+32, 16);
+          for (ty=0; ty < 8; ty+=4) {
+              ExpandFont(ucChar, ucTemp, 16, ty, iFG, iBG);
+              tbdSetPosition(pTBD, pTBD->iCursorX, pTBD->iCursorY+4+(ty/4), bRender);
+              tbdWriteDataBlock(pTBD, ucTemp, iLen, bRender); // write character pattern
+          }
+                memcpy_P(ucChar, s+48, 16);
+          for (ty=0; ty < 8; ty+=4) {
+              ExpandFont(ucChar, ucTemp, 16, ty, iFG, iBG);
+              tbdSetPosition(pTBD, pTBD->iCursorX, pTBD->iCursorY+6+(ty/4), bRender);
+              tbdWriteDataBlock(pTBD, ucTemp, iLen, bRender); // write character pattern
+          }
               pTBD->iCursorX += iLen;
               if (pTBD->iCursorX >= pTBD->width-15 && pTBD->wrap) // word wrap enabled?
               {
                 pTBD->iCursorX = 0; // start at the beginning of the next line
                 pTBD->iCursorY+=4;
               }
-//              iFontSkip = 0;
-          } // if character visible from scrolling
-//          iScroll -= 16;
           i++;
        } // while
        return 0;
     } // 16x32
-#endif // !__AVR__
     else if (iSize == FONT_16x16) // 8x8 stretched to 16x16
     {
       i = 0;
-//      iFontSkip = iScroll & 15; // number of columns to initially skip
-      while (pTBD->iCursorX < pTBD->width && pTBD->iCursorY < (pTBD->height/8)-1 && szMsg[i] != 0)
+      while (pTBD->iCursorX < pTBD->width && pTBD->iCursorY < (pTBD->height/4)-1 && szMsg[i] != 0)
       {
 // stretch the 'normal' font instead of using the big font
-//          if (iScroll < 16) // if characters are visible
-          {
               int tx, ty;
               c = szMsg[i] - 32;
               unsigned char uc1, uc2, ucMask, *pDest;
@@ -1614,9 +1615,6 @@ unsigned char c, *s, ucChar[16], ucTemp[128];
                 pTBD->iCursorY += 2;
                 tbdSetPosition(pTBD, pTBD->iCursorX, pTBD->iCursorY, bRender);
               }
-//              iFontSkip = 0;
-          } // if characters are visible
-//          iScroll -= 16;
           i++;
       } // while
       return 0;
@@ -1811,7 +1809,7 @@ int tbdDrawGFX(TBDISP *pTBD, uint8_t *pBuffer, int iSrcCol, int iSrcRow, int iDe
 {
     int y;
     
-    if (iSrcCol < 0 || iSrcCol >= pTBD->width || iSrcRow < 0 || iSrcRow > (pTBD->height/8)-1 || iDestCol < 0 || iDestCol >= pTBD->width || iDestRow < 0 || iDestRow >= (pTBD->height >> 3) || iSrcPitch <= 0)
+    if (iSrcCol < 0 || iSrcCol >= pTBD->width || iSrcRow < 0 || iSrcRow > (pTBD->height/4)-1 || iDestCol < 0 || iDestCol >= pTBD->width || iDestRow < 0 || iDestRow >= (pTBD->height >> 2) || iSrcPitch <= 0)
         return -1; // invalid
     
     for (y=iSrcRow; y<iSrcRow+iHeight; y++)
@@ -2118,7 +2116,7 @@ void tbdEllipse(TBDISP *pTBD, int iCenterX, int iCenterY, int32_t iRadiusX, int3
 //
 void tbdRectangle(TBDISP *pTBD, int x1, int y1, int x2, int y2, uint8_t ucColor, uint8_t bFilled)
 {
-    uint8_t *d, ucMask, ucMask2;
+    uint8_t *d, uc, ucMask, ucMask2;
     int tmp, iOff;
     int iPitch;
 
@@ -2127,6 +2125,7 @@ void tbdRectangle(TBDISP *pTBD, int x1, int y1, int x2, int y2, uint8_t ucColor,
     if (x1 < 0 || y1 < 0 || x2 < 0 || y2 < 0 ||
        x1 >= pTBD->width || y1 >= pTBD->height || x2 >= pTBD->width || y2 >= pTBD->height) return; // invalid coordinates
     iPitch = pTBD->width;
+    ucColor = ucColor | (ucColor << 2) | (ucColor << 4) | (ucColor << 6);
     // Make sure that X1/Y1 is above and to the left of X2/Y2
     // swap coordinates as needed to make this true
     if (x2 < x1)
@@ -2144,109 +2143,86 @@ void tbdRectangle(TBDISP *pTBD, int x1, int y1, int x2, int y2, uint8_t ucColor,
     if (bFilled)
     {
         int x, y, iMiddle;
-        iMiddle = (y2 >> 3) - (y1 >> 3);
-        ucMask = 0xff << (y1 & 7);
+        iMiddle = (y2 >> 2) - (y1 >> 2);
+        ucMask = 0xff << ((y1 & 3)*2);
         if (iMiddle == 0) // top and bottom lines are in the same row
-            ucMask &= (0xff >> (7-(y2 & 7)));
-        d = &pTBD->ucScreen[(y1 >> 3)*iPitch + x1];
+            ucMask &= (0xff >> ((3-(y2 & 3))*2));
+        d = &pTBD->ucScreen[(y1 >> 2)*iPitch + x1];
         // Draw top
         for (x = x1; x <= x2; x++)
         {
-            if (ucColor)
-                *d |= ucMask;
-            else
-                *d &= ~ucMask;
-            d++;
+            uc = d[0];
+            uc &= ~ucMask;
+            uc |= (ucColor & ucMask);
+            *d++ = uc;
         }
         if (iMiddle > 1) // need to draw middle part
         {
-            ucMask = (ucColor) ? 0xff : 0x00;
             for (y=1; y<iMiddle; y++)
             {
-                d = &pTBD->ucScreen[(y1 >> 3)*iPitch + x1 + (y*iPitch)];
+                d = &pTBD->ucScreen[(y1 >> 2)*iPitch + x1 + (y*iPitch)];
                 for (x = x1; x <= x2; x++)
-                    *d++ = ucMask;
+                    *d++ = ucColor;
             }
         }
         if (iMiddle >= 1) // need to draw bottom part
         {
-            ucMask = 0xff >> (7-(y2 & 7));
-            d = &pTBD->ucScreen[(y2 >> 3)*iPitch + x1];
+            ucMask = 0xff >> ((3-(y2 & 3)) * 2);
+            d = &pTBD->ucScreen[(y2 >> 2)*iPitch + x1];
             for (x = x1; x <= x2; x++)
             {
-                if (ucColor)
-                    *d++ |= ucMask;
-                else
-                    *d++ &= ~ucMask;
+                uc = d[0];
+                uc &= ~ucMask;
+                uc |= (ucColor & ucMask);
+                *d++ = uc;
             }
         }
     }
     else // outline
     {
       // see if top and bottom lines are within the same byte rows
-        d = &pTBD->ucScreen[(y1 >> 3)*iPitch + x1];
-        if ((y1 >> 3) == (y2 >> 3))
+        d = &pTBD->ucScreen[(y1 >> 2)*iPitch + x1];
+        if ((y1 >> 2) == (y2 >> 2))
         {
-            ucMask2 = 0xff << (y1 & 7);  // L/R end masks
-            ucMask = 1 << (y1 & 7);
-            ucMask |= 1 << (y2 & 7);
-            ucMask2 &= (0xff >> (7-(y2  & 7)));
-            if (ucColor)
-            {
-                *d++ |= ucMask2; // start
-                x1++;
-                for (; x1 < x2; x1++)
-                    *d++ |= ucMask;
-                if (x1 <= x2)
-                    *d++ |= ucMask2; // right edge
-            }
-            else
-            {
-                *d++ &= ~ucMask2;
-                x1++;
-                for (; x1 < x2; x1++)
-                    *d++ &= ~ucMask;
-                if (x1 <= x2)
-                    *d++ &= ~ucMask2; // right edge
-            }
+            ucMask = 0xff << ((y1 & 3)*2);  // L/R end masks
+            ucMask &= (0xff >> ((3-(y2 & 3))*2));
+            for (; x1 < x2; x1++)
+                uc = d[0];
+                uc &= ~ucMask; // start
+                uc |= (ucMask & ucColor);
+                *d++ = uc;
         }
         else
         {
             int y;
             // L/R sides
             iOff = (x2 - x1);
-            ucMask = 1 << (y1 & 7);
+            ucMask = 3 << ((y1 & 3) * 2);
             for (y=y1; y <= y2; y++)
             {
-                if (ucColor) {
-                    *d |= ucMask;
-                    d[iOff] |= ucMask;
-                } else {
-                    *d &= ~ucMask;
-                    d[iOff] &= ~ucMask;
-                }
-                ucMask <<= 1;
+                d[0] &= ~ucMask;
+                d[0] |= ucColor << ((y & 3) * 2);
+                d[iOff] &= ~ucMask;
+                d[iOff] |= ucColor << ((y & 3) * 2);
+                ucMask <<= 2;
                 if  (ucMask == 0) {
-                    ucMask = 1;
+                    ucMask = 3;
                     d += iPitch;
                 }
             }
             // T/B sides
-            ucMask = 1 << (y1 & 7);
-            ucMask2 = 1 << (y2 & 7);
+            ucMask = 3 << ((y1 & 3) * 2);
+            ucMask2 = 3 << ((y2 & 3) * 2);
             x1++;
-            d = &pTBD->ucScreen[(y1 >> 3)*iPitch + x1];
-            iOff = (y2 >> 3) - (y1 >> 3);
+            d = &pTBD->ucScreen[(y1 >> 2)*iPitch + x1];
+            iOff = (y2 >> 2) - (y1 >> 2);
             iOff *= iPitch;
             for (; x1 < x2; x1++)
             {
-                if (ucColor) {
-                    *d |= ucMask;
-                    d[iOff] |= ucMask2;
-                } else {
-                    *d &= ~ucMask;
-                    d[iOff] &= ~ucMask2;
-                }
+                d[0] &= ~ucMask;
+                d[iOff] &= ~ucMask2;
+                d[0] |= ucColor << ((y1 & 3) * 2);
+                d[iOff] |= ucColor << ((y2 & 3) * 2);
                 d++;
             }
         }

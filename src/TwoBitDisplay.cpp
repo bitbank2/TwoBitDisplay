@@ -43,12 +43,14 @@ const unsigned char oled128_initbuf[] PROGMEM = {0x00, 0xae,0xdc,0x00,0x81,0x40,
       0xa1,0xc8,0xa8,0x7f,0xd5,0x50,0xd9,0x22,0xdb,0x35,0xb0,0xda,0x12,
       0xa4,0xa6,0xaf};
 
-const unsigned char uc1617s_initbuf[] PROGMEM = {
+const unsigned char uc1617s_128128_initbuf[] PROGMEM = {
 //      0x31, 0x00, // set APC command
       0x27, // temp compensation
       0x2b, // panel loading (13-18nf)
       0x2f, // internal pump control
       0xeb, // bias = 1/11
+      0xa6, // non-inverted
+      0xa4, // don't set all pixels on
       0x81, 0x2e, // contrast = 46/64
       0xf1, 0x7f, // set COM end
       0xf2, 0x00, // display line start
@@ -58,6 +60,26 @@ const unsigned char uc1617s_initbuf[] PROGMEM = {
       0xd7, //
       0x8b, // auto increment
       0xc0, // LCD mapping
+      0xaf // set display enable
+};
+
+const unsigned char uc1617s_12896_initbuf[] PROGMEM = {
+//      0x31, 0x00, // set APC command
+      0x27, // temp compensation
+      0x2b, // panel loading (13-18nf)
+      0x2f, // internal pump control
+      0xea, // bias = 1/10
+      0xa4, // don't set all pixels on
+      0x81,
+      0x68, // set PM=12, vop=12.8v, 4c
+      0xa9, // set linerate mux, a2
+      0xc8,
+      0x0b,
+      0x8b, // auto increment
+      0xc0, // MY=0, MX=0
+      0xf1, 0x5f, // set COM end
+      0xd3, // gray shade set
+      0xd7, // gray shade set
       0xaf // set display enable
 };
 
@@ -140,62 +162,14 @@ int iPitch;
 } /* tbdDumpWindow() */
 
 //
-// Write a single line to a Sharp memory LCD
-// You must provide the exact number of bytes needed for a complete line
-// e.g. for the 144x168 display, pSrc must provide 144 pixels (18 bytes) 
-//
-void tbdWriteLCDLine(TBDISP *pTBD, uint8_t *pSrc, int iLine)
-{
-    int x;
-    uint8_t c, ucInvert, *d, ucStart;
-    uint8_t ucLineBuf[54]; // 400 pixels is max supported width = 50 bytes + 4
-    int iPitch = pTBD->width / 8;
-    static int iVCOM = 0;
-
-//    if (pTBD == NULL || pSrc == NULL || pTBD->type < SHARP_144x168)
-//        return; // invalid request
-    if (iLine < 0 || iLine >= pTBD->height)
-        return;
-    
-      ucInvert = (pTBD->invert) ? 0x00 : 0xff;
-      digitalWrite(pTBD->iCSPin, HIGH); // active high
-
-      ucStart = 0x80; // write command
-      iVCOM++;
-      if (iVCOM & 0x100) // flip it every 256 lines
-        ucStart |= 0x40; // VCOM bit
-      ucLineBuf[1] = ucStart;
-      // this code assumes I2C, so the first byte is ignored
-      _I2CWrite(pTBD, ucLineBuf, 2); // write command(01) + vcom(02)
-
-     d = &ucLineBuf[2];
-     ucLineBuf[1] = pgm_read_byte(&ucMirror[iLine+1]); // current line number
-     for (x=0; x<iPitch; x++)
-     {
-         c = pSrc[0] ^ ucInvert; // we need to brute-force invert it
-         *d++ = pgm_read_byte(&ucMirror[c]);
-         pSrc++;
-     } // for x
-    // write this line to the display
-    ucLineBuf[iPitch+2] = 0; // end of line
-    _I2CWrite(pTBD, ucLineBuf, iPitch+3);
-    ucLineBuf[1] = 0;
-    _I2CWrite(pTBD, ucLineBuf, 2); // final transfer
-    digitalWrite(pTBD->iCSPin, LOW); // de-activate
-} /* tbdWriteLCDLine() */
-
-//
 // Turn the display on or off
 //
 void tbdPower(TBDISP *pTBD, int bOn)
 {
 uint8_t ucCMD;
 
-  if (pTBD->type == LCD_NOKIA5110)
-    ucCMD = (bOn) ? 0x20 : 0x24;
-  else // all other supported displays
     ucCMD = (bOn) ? 0xaf : 0xae;
-  tbdWriteCommand(pTBD, ucCMD);
+    tbdWriteCommand(pTBD, ucCMD);
 } /* tbdPower() */
 #if !defined( _LINUX_ )
 
@@ -470,14 +444,34 @@ int rc = OLED_NOT_FOUND;
     digitalWrite(reset, HIGH);
     delay(10);
   }
-  if (iType == LCD_UC1617S) { // special case for this device
+  if (iType == LCD_UC1617S_128128 || iType == LCD_UC1617S_12896) { // special case for this device
     //128x128 I2C LCD
     pTBD->oled_addr = iAddr;
-    s = (uint8_t *)uc1617s_initbuf;
-    u8Len = sizeof(uc1617s_initbuf);
+//      uc[0] = 0xe2; // reset
+//      _I2CWrite(pTBD, uc, 1);
+//      delay(150);
+      if (iType == LCD_UC1617S_128128) {
+          s = (uint8_t *)uc1617s_128128_initbuf;
+          u8Len = sizeof(uc1617s_128128_initbuf);
+          pTBD->width = 128;
+          pTBD->height = 128;
+      } else {
+          s = (uint8_t *)uc1617s_12896_initbuf;
+          u8Len = sizeof(uc1617s_12896_initbuf);
+          pTBD->width = 96;
+          pTBD->height = 128;
+      }
     _I2CWrite(pTBD, s, u8Len);
-    pTBD->width = 128;
-    pTBD->height = 128;
+      if (bFlip) // rotate display 180
+      {
+        uc[0] = 0xc6; // LCD mapping command
+        _I2CWrite(pTBD,uc, 1);
+      }
+      if (bInvert)
+      {
+        uc[0] = 0xa7; // invert command
+        _I2CWrite(pTBD, uc, 1);
+      }
     return LCD_OK;
   }
   // find the device address if requested
@@ -704,10 +698,9 @@ static void tbdWriteCommand2(TBDISP *pTBD, unsigned char c, unsigned char d)
 unsigned char buf[4];
 
     if (pTBD->com_mode == COM_I2C) {// I2C device
-        buf[0] = 0x00;
         buf[1] = c;
         buf[2] = d;
-        _I2CWrite(pTBD, buf, 3);
+        _I2CWrite(pTBD, buf, 2);
     } else { // must be SPI
         tbdWriteCommand(pTBD, c);
         tbdWriteCommand(pTBD, d);
@@ -719,103 +712,9 @@ unsigned char buf[4];
 //
 void tbdSetContrast(TBDISP *pTBD, unsigned char ucContrast)
 {
-  if (pTBD->type == LCD_HX1230)
-  { // valid values are 0-31, so scale it
-      ucContrast >>= 3;
-      tbdWriteCommand(pTBD, 0x80 + ucContrast);
-  }
-  else if (pTBD->type == LCD_NOKIA5110)
-  {
-      // we allow values of 0xb0-0xbf, so shrink the range
-      ucContrast >>= 4;
-      tbdWriteCommand(pTBD, 0x21); // set advanced command mode
-      tbdWriteCommand(pTBD, 0xb0 | ucContrast);
-      tbdWriteCommand(pTBD, 0x20); // set simple command mode
-  }
-  else // OLEDs + UC1701
-      tbdWriteCommand2(pTBD, 0x81, ucContrast);
+   tbdWriteCommand2(pTBD, 0x81, ucContrast);
 } /* tbdSetContrast() */
 
-//
-// Special case for Sharp Memory LCD
-//
-static void SharpDumpBuffer(TBDISP *pTBD, uint8_t *pBuffer)
-{
-int x, y;
-uint8_t c, ucInvert, *s, *d, ucStart;
-uint8_t ucLineBuf[56];
-int iPitch = pTBD->width / 8;
-static uint8_t ucVCOM = 0;
-int iBit;
-uint8_t ucMask;
-
-  ucInvert = (pTBD->invert) ? 0x00 : 0xff;
-  digitalWrite(pTBD->iCSPin, HIGH); // active high
- 
-    ucLineBuf[0] = 0;
-  ucStart = 0x80; // write command
-  if (ucVCOM)
-    ucStart |= 0x40; // VCOM bit
-  ucLineBuf[1] = ucStart;
-  // this code assumes I2C, so the first byte is ignored
-  _I2CWrite(pTBD, ucLineBuf, 2); // write command(01) + vcom(02)
-  ucVCOM = !ucVCOM; // need to toggle this each transaction
-
- // We need to flip and invert the image in code because the Sharp memory LCD
- // controller only has the simplest of commands for data writing
-  if (pTBD->flip)
-  {
-     for (y=0; y<pTBD->height; y++) // we have to write the memory in the wrong direction
-     {  
-         ucMask = 0x80 >> (y & 7);
-        s = &pBuffer[pTBD->width - 1 + (pTBD->width * ((pTBD->height - 1 - y) >> 3))]; // point to last line first
-        d = &ucLineBuf[2];
-        ucLineBuf[1] = pgm_read_byte(&ucMirror[y+1]); // current line number
-        for (x=0; x<pTBD->width/8; x++)
-        {  
-           c = ucInvert; // we need to brute-force invert it
-            for (iBit=7; iBit>=0; iBit--)
-            {
-                if (s[0] & ucMask)
-                    c ^= (1 << iBit);
-                s--;
-            }
-           *d++ = c;
-        } // for y
-        // write this line to the display
-        ucLineBuf[iPitch+2] = 0; // end of line
-        _I2CWrite(pTBD, ucLineBuf, iPitch+3);
-     } // for x
-  }
-  else // normal orientation
-  {
-     for (y=0; y<pTBD->height; y++) // we have to write the memory in the wrong direction
-     {
-        ucMask = 1 << (y & 7);
-        s = &pBuffer[pTBD->width * (y >> 3)]; // point to last line first
-        d = &ucLineBuf[2];
-        
-        ucLineBuf[1] = pgm_read_byte(&ucMirror[y+1]); // current line number
-        for (x=0; x<pTBD->width/8; x++)
-        {
-            c = ucInvert;
-            for (iBit=7; iBit>=0; iBit--)
-            {
-                if (s[0] & ucMask)
-                    c ^= (1 << iBit);
-                s++;
-            }
-           *d++ = c;
-        } // for y
-        // write this line to the display
-        ucLineBuf[iPitch+2] = 0; // end of line
-        _I2CWrite(pTBD, ucLineBuf, iPitch+3);
-     } // for x
-  }
-  ucLineBuf[1] = 0;
-  _I2CWrite(pTBD, ucLineBuf, 2); // final transfer
-  digitalWrite(pTBD->iCSPin, LOW); // de-activate
-} /* SharpDumpBuffer() */
 //
 // Dump a screen's worth of data directly to the display
 // Try to speed it up by comparing the new bytes with the existing buffer
