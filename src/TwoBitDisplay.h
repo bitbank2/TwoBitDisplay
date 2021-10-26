@@ -139,20 +139,6 @@ enum {
 // The memory buffer must be provided at the time of creation
 //
 void tbdCreateVirtualDisplay(TBDISP *pTBD, int width, int height, uint8_t *buffer);
-// Constants for the tbdCopy() function
-// Output format options -
-#define TBD_LSB_FIRST     0x001
-#define TBD_MSB_FIRST     0x002
-#define TBD_VERT_BYTES    0x004
-#define TBD_HORZ_BYTES    0x008
-// Orientation options -
-#define TBD_ROTATE_90     0x010
-#define TBD_FLIP_VERT     0x020
-#define TBD_FLIP_HORZ     0x040
-#define TBD_INVERT        0x080
-// Copy the current bitmap buffer from its native form (LSB_FIRST, VERTICAL_BYTES) to the requested form
-// A copy of the same format will just do a memcpy
-int tbdCopy(TBDISP *pTBD, int iFlags, uint8_t *pDestination);
 //
 // Draw the contents of a memory buffer onto a display
 // The sub-window will be clipped if it specifies too large an area
