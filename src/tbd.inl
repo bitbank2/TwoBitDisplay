@@ -12,9 +12,12 @@
 #ifndef I2C_SLAVE
 #define I2C_SLAVE 0
 #endif
-static int file_i2c = 0;
-void digitalWrite(int iPin, int iState) {
-
+static void digitalWrite(int iPin, int iState) {
+   AIOWriteGPIO(iPin, iState);
+}
+static void pinMode(int iPin, int iMode)
+{
+	AIOAddGPIO(iPin, iMode);
 }
 #endif
 void tbdSetDCMode(TBDISP *pTBD, int iMode);
@@ -612,27 +615,35 @@ static int16_t pgm_read_word(uint8_t *ptr)
 int I2CReadRegister(BBI2C *pI2C, uint8_t addr, uint8_t reg, uint8_t *pBuf, int iLen)
 {
 int rc;
-  rc = write(file_i2c, &reg, 1);
-  rc = read(file_i2c, pBuf, iLen);
+  rc = write(pI2C->file_i2c, &reg, 1);
+  rc = read(pI2C->file_i2c, pBuf, iLen);
   return (rc > 0);
 }
 int I2CRead(BBI2C *pI2C, uint8_t addr, uint8_t *pBuf, int iLen)
 {
 int rc;
-  rc = read(file_i2c, pBuf, iLen);
+  rc = read(pI2C->file_i2c, pBuf, iLen);
   return (rc > 0);
 }
+uint8_t I2CTest(BBI2C *pI2C, uint8_t addr)
+{
+uint8_t response = 0;
+   if (ioctl(pI2C->file_i2c, I2C_SLAVE, addr) >= 0)
+	   response = 1;
+   return response;
+} /* I2CTest() */
+
 void I2CInit(BBI2C *pI2C, uint32_t iSpeed)
 {
 char filename[32];
 
   sprintf(filename, "/dev/i2c-%d", pI2C->iSDA); // I2C bus number passed in SDA pin
-  if ((file_i2c = open(filename, O_RDWR)) < 0)
+  if ((pI2C->file_i2c = open(filename, O_RDWR)) < 0)
       return;// 1;
-  if (ioctl(file_i2c, I2C_SLAVE, pI2C->iSCL) < 0) // set slave address
+  if (ioctl(pI2C->file_i2c, I2C_SLAVE, pI2C->iSCL) < 0) // set slave address
   {
-     close(file_i2c);
-     file_i2c = 0;
+     close(pI2C->file_i2c);
+     pI2C->file_i2c = 0;
       return; // 1;
   }
     return; // 0;
@@ -641,7 +652,8 @@ char filename[32];
 // Wrapper function to write I2C data
 static void _I2CWrite(TBDISP *pTBD, unsigned char *pData, int iLen)
 {
-  write(file_i2c, pData, iLen);
+  ioctl(pTBD->bbi2c.file_i2c, I2C_SLAVE, pTBD->oled_addr);
+  write(pTBD->bbi2c.file_i2c, pData, iLen);
 }
 #else // Arduino
 static void _I2CWrite(TBDISP *pTBD, unsigned char *pData, int iLen)
@@ -986,9 +998,7 @@ void tbdDrawTile(TBDISP *pTBD, const uint8_t *pTile, int x, int y, int iRotation
     uint8_t ucTemp[32]; // prepare LCD data here
     uint8_t i, j, k, iOffset, ucMask, uc, ucPixels;
     uint8_t bFlipX=0, bFlipY=0;
-    int iPitch;
     
-    iPitch = pTBD->width;
     if (x < 0 || y < 0 || y > (pTBD->height/8)-2 || x > pTBD->width-16)
         return; // out of bounds
     if (pTile == NULL) return; // bad pointer; really? :(
@@ -1219,11 +1229,11 @@ int tbdScaledString(TBDISP *pTBD, int x, int y, char *szMsg, int iSize, int ucCo
 {
 uint32_t row, col, dx, dy;
 uint32_t sx, sy;
-uint8_t c, uc, color, *d;
+uint8_t c, *d;
 const uint8_t *s;
 uint8_t ucTemp[16];
-int tx, ty, bit, iFontOff;
-int iPitch, iOffset;
+int tx, ty, iFontOff;
+int iPitch;
 int iFontWidth;
 
    if (iXScale == 0 || iYScale == 0 || szMsg == NULL || pTBD == NULL || pTBD->ucScreen == NULL || x < 0 || y < 0 || x >= pTBD->width-1 || y >= pTBD->height-1)
@@ -1246,11 +1256,9 @@ int iFontWidth;
       col = 0;
       for (tx=0; tx<(int)dx; tx++) {
          row = 0;
-         uc = ucTemp[col >> 8];
+         //uc = ucTemp[col >> 8];
          for (ty=0; ty<(int)dy; ty++) {
-            int nx, ny;
-            bit = row >> 8;
-            color = (uc & (1 << bit)); // set or clear the pixel
+            int nx=0, ny=0;
             switch (iRotation) {
                case ROT_0:
                   nx = x + tx;
@@ -1335,7 +1343,7 @@ static void ExpandFont(uint8_t *ucChar, uint8_t *ucTemp, int iLen, int ty, int i
 //
 int tbdWriteString(TBDISP *pTBD, int x, int y, char *szMsg, int iSize, int iFG, int iBG, int bRender)
 {
-int i, j, iOff, iFontOff, iLen, tx, ty;
+int i, j, iOff, iFontOff, iLen=0, tx, ty;
 unsigned char c, *s, ucChar[16], ucTemp[128];
 
     if (x == -1 || y == -1) // use the cursor position
@@ -1358,7 +1366,6 @@ unsigned char c, *s, ucChar[16], ucTemp[128];
             tx = pTBD->iCursorX;
             while (tx < pTBD->width && szMsg[i] != 0)
             {
-                uint8_t ucBits, ucMask;
                 c = (unsigned char)szMsg[i];
                 iFontOff = (int)(c-32) * iCharWidth;
                 // we can't directly use the pointer to FLASH memory, so copy to a local buffer
@@ -1502,7 +1509,7 @@ unsigned char c, *s, ucChar[16], ucTemp[128];
 // stretch the 'normal' font instead of using the big font
               int tx, ty;
               c = szMsg[i] - 32;
-              unsigned char uc1, uc2, ucMask, *pDest;
+              unsigned char ucMask;
               s = (unsigned char *)&ucSmallFont[(int)c*5];
               ucChar[0] = 0; // first column is blank
               memcpy_P(&ucChar[1], s, 5);
@@ -1529,7 +1536,6 @@ unsigned char c, *s, ucChar[16], ucTemp[128];
                   uint8_t c0, c1, ucMask2;
                   c0 = ucChar[tx];
                   c1 = ucChar[tx+1];
-                  pDest = &ucTemp[tx*2];
                   ucMask = 1;
                   ucMask2 = 2;
                   for (ty=0; ty<7; ty++)
@@ -2061,11 +2067,12 @@ void tbdRectangle(TBDISP *pTBD, int x1, int y1, int x2, int y2, uint8_t ucColor,
         {
             ucMask = 0xff << ((y1 & 3)*2);  // L/R end masks
             ucMask &= (0xff >> ((3-(y2 & 3))*2));
-            for (; x1 < x2; x1++)
+            for (; x1 < x2; x1++) {
                 uc = d[0];
                 uc &= ~ucMask; // start
                 uc |= (ucMask & ucColor);
                 *d++ = uc;
+	    }
         }
         else
         {

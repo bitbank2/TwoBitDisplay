@@ -24,7 +24,11 @@
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
 #include <math.h>
-
+#define OUTPUT GPIO_OUT
+#define INPUT GPIO_IN
+#define INPUT_PULLUP GPIO_IN_PULLUP
+#define HIGH 1
+#define LOW 0
 #else // Arduino
 
 #include <Arduino.h>
@@ -34,7 +38,7 @@
 #include <SPI.h>
 
 #endif // _LINUX_
-#include <TwoBitDisplay.h>
+#include "TwoBitDisplay.h"
 // All of the drawing code is in here
 #include "tbd.inl"
 
@@ -111,6 +115,16 @@ void tbdWriteCommand(TBDISP *pTBD, unsigned char c);
 void tbdWriteDataBlock(TBDISP *pTBD, unsigned char *ucBuf, int iLen, int bRender);
 //static void SPI_BitBang(TBDISP *pTBD, uint8_t *pData, int iLen, uint8_t iMOSIPin, uint8_t iSCKPin);
 
+#ifdef _LINUX_
+void delay(int iMS)
+{
+	usleep(iMS * 1000);
+} /* delay() */
+void delayMicroseconds(int iUS)
+{
+	usleep(iUS);
+} /* delayMicroseconds() */
+#endif // _LINUX_
 //
 // Draw the contents of a memory buffer onto a display
 // The sub-window will be clipped if it specifies too large an area
@@ -428,11 +442,11 @@ int rc = OLED_NOT_FOUND;
   pTBD->bbi2c.iSCL = scl;
   pTBD->bbi2c.bWire = bWire;
   pTBD->com_mode = COM_I2C; // communication mode
-
-  I2CInit(&pTBD->bbi2c, iSpeed); // on Linux, SDA = bus number, SCL = device address
 #ifdef _LINUX_
-  pTBD->oled_addr = (uint8_t)scl;
-#else
+  if (bWire == 1)
+      pTBD->bbi2c.iBus = scl; // on Linux set I2C bus number in the SCL var
+#endif // _LINUX_
+  I2CInit(&pTBD->bbi2c, iSpeed); // on Linux, SDA = bus number, SCL = device address
   // Reset it
   if (reset != -1)
   {
@@ -442,7 +456,7 @@ int rc = OLED_NOT_FOUND;
     digitalWrite(reset, LOW);
     delay(50);
     digitalWrite(reset, HIGH);
-    delay(10);
+    delay(100);
   }
   if (iType == LCD_UC1617S_128128 || iType == LCD_UC1617S_12896) { // special case for this device
     //128x128 I2C LCD
@@ -492,7 +506,6 @@ int rc = OLED_NOT_FOUND;
     if (!I2CTest(&pTBD->bbi2c, iAddr))
        return rc; // no display found
   }
-#endif
   // Detect the display controller (SSD1306, SH1107 or SH1106)
   uint8_t u = 0;
   I2CReadRegister(&pTBD->bbi2c, pTBD->oled_addr, 0x00, &u, 1); // read the status register
@@ -723,7 +736,7 @@ void tbdDumpBuffer(TBDISP *pTBD, uint8_t *pBuffer)
 {
 int x, y, iPitch;
 int iLines, iCols;
-uint8_t bNeedPos;
+//uint8_t bNeedPos;
 uint8_t *pSrc = pTBD->ucScreen;
     
   iPitch = pTBD->width;
