@@ -649,23 +649,20 @@ char filename[32];
     return; // 0;
 }
 
-// Wrapper function to write I2C data
+#endif // _LINUX_
+
 static void _I2CWrite(TBDISP *pTBD, unsigned char *pData, int iLen)
 {
-  ioctl(pTBD->bbi2c.file_i2c, I2C_SLAVE, pTBD->oled_addr);
-  write(pTBD->bbi2c.file_i2c, pData, iLen);
-}
-#else // Arduino
-static void _I2CWrite(TBDISP *pTBD, unsigned char *pData, int iLen)
-{
-#if !defined( __AVR_ATtiny85__ )
   if (pTBD->com_mode == COM_SPI) // we're writing to SPI, treat it differently
   {
     if (pTBD->iDCPin != 0xff)
     {
-      digitalWrite(pTBD->iDCPin, (pData[0] == 0) ? LOW : HIGH); // data versus command
+      digitalWrite(pTBD->iDCPin, LOW); // command mode
       digitalWrite(pTBD->iCSPin, LOW);
     }
+#ifdef _LINUX_
+    AIOWriteSPI(pTBD->bbi2c.file_i2c, pData, iLen);
+#else
 #ifdef HAL_ESP32_HAL_H_
    {
    uint8_t ucTemp[1024];
@@ -673,13 +670,17 @@ static void _I2CWrite(TBDISP *pTBD, unsigned char *pData, int iLen)
    }
 #else
     SPI.transfer(&pData[1], iLen-1);
-#endif
-    if (pTBD->type < SHARP_144x168)
-      digitalWrite(pTBD->iCSPin, HIGH);
+#endif // ESP32
+    digitalWrite(pTBD->iCSPin, HIGH);
+#endif // _LINUX_
+    digitalWrite(pTBD->iDCPin, HIGH); // default to data mode
   }
   else // must be I2C
-#endif // !ATtiny85
   {
+#ifdef _LINUX_
+	ioctl(pTBD->bbi2c.file_i2c, I2C_SLAVE, pTBD->oled_addr);
+	write(pTBD->bbi2c.file_i2c, pData, iLen);
+#else
     if (pTBD->bbi2c.bWire && iLen > 32) // Hardware I2C has write length limits
     {
        iLen--; // don't count the 0x40 byte the first time through
@@ -696,30 +697,29 @@ static void _I2CWrite(TBDISP *pTBD, unsigned char *pData, int iLen)
     {
       I2CWrite(&pTBD->bbi2c, pTBD->oled_addr, pData, iLen);
     }
+#endif // _LINUX_
   } // I2C
 } /* _I2CWrite() */
-#endif // _LINUX_
 
 // Send a single byte command to the OLED controller
 void tbdWriteCommand(TBDISP *pTBD, unsigned char c)
 {
-unsigned char buf[4];
 
   if (pTBD->com_mode == COM_I2C) {// I2C device
-      buf[0] = 0x00; // command introducer
-      buf[1] = c;
-      _I2CWrite(pTBD, buf, 2);
+      _I2CWrite(pTBD, &c, 1);
   } else { // must be SPI
-#ifndef _LINUX_
       tbdSetDCMode(pTBD, MODE_COMMAND);
+#ifdef _LINUX_
+      AIOWriteSPI(pTBD->bbi2c.file_i2c, &c, 1);
+#else
       digitalWrite(pTBD->iCSPin, LOW);
       if (pTBD->iMOSIPin == 0xff)
          SPI.transfer(c);
       else
          SPI_BitBang(pTBD, &c, 1, pTBD->iMOSIPin, pTBD->iCLKPin);
       digitalWrite(pTBD->iCSPin, HIGH);
-      tbdSetDCMode(pTBD, MODE_DATA);
 #endif
+      tbdSetDCMode(pTBD, MODE_DATA);
   }
 } /* tbdWriteCommand() */
 
@@ -829,11 +829,9 @@ void tbdSetPosition(TBDISP *pTBD, int x, int y, int bRender)
 unsigned char buf[4];
 int iPitch = pTBD->width;
 
-//  tbdCachedFlush(pTBD, bRender); // flush any cached data first
-    
   pTBD->iScreenOffset = (y*iPitch)+x;
   
-  if (pTBD->type == LCD_VIRTUAL || pTBD->type >= SHARP_144x168)
+  if (pTBD->type == LCD_VIRTUAL)
     return; // nothing to do
 
   if (!bRender)
@@ -856,7 +854,6 @@ int iPitch = pTBD->width;
 //
 void tbdWriteDataBlock(TBDISP *pTBD, unsigned char *ucBuf, int iLen, int bRender)
 {
-unsigned char ucTemp[196];
 int iPitch, iBufferSize;
 
   iPitch = pTBD->width;
@@ -871,15 +868,15 @@ if (pTBD->ucScreen && (iLen + pTBD->iScreenOffset) <= iBufferSize)
   if (pTBD->iScreenOffset >= iBufferSize)
     pTBD->iScreenOffset -= iBufferSize;
 }
-if (pTBD->type == LCD_VIRTUAL || pTBD->type >= SHARP_144x168)
-  return; // nothing else to do
 // Copying the data has the benefit in SPI mode of not letting
 // the original data get overwritten by the SPI.transfer() function
   if (bRender)
   {
       if (pTBD->com_mode == COM_SPI) // SPI/Bit Bang
       {
-#ifndef _LINUX_
+#ifdef _LINUX_
+	AIOWriteSPI(pTBD->bbi2c.file_i2c, ucBuf, iLen);
+#else
           digitalWrite(pTBD->iCSPin, LOW);
           if (pTBD->iMOSIPin != 0xff) // Bit Bang
             SPI_BitBang(pTBD, ucBuf, iLen, pTBD->iMOSIPin, pTBD->iCLKPin);
@@ -890,15 +887,10 @@ if (pTBD->type == LCD_VIRTUAL || pTBD->type >= SHARP_144x168)
       }
       else // I2C
       {
-          if (pTBD->type == LCD_UC1617S_128128 || pTBD->type == LCD_UC1617S_12896) { // special case for I2C LCD
             pTBD->oled_addr |= 1;
             _I2CWrite(pTBD, ucBuf, iLen);
             pTBD->oled_addr &= ~1;
             return;
-          }
-          ucTemp[0] = 0x40; // data command
-          memcpy(&ucTemp[1], ucBuf, iLen);
-          _I2CWrite(pTBD, ucTemp, iLen+1);
       }
   }
 } /* tbdWriteDataBlock() */

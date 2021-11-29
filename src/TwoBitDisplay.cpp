@@ -43,9 +43,6 @@
 #include "tbd.inl"
 
 // Initialization sequences
-const unsigned char oled128_initbuf[] PROGMEM = {0x00, 0xae,0xdc,0x00,0x81,0x40,
-      0xa1,0xc8,0xa8,0x7f,0xd5,0x50,0xd9,0x22,0xdb,0x35,0xb0,0xda,0x12,
-      0xa4,0xa6,0xaf};
 
 const unsigned char uc1617s_128128_initbuf[] PROGMEM = {
 //      0x31, 0x00, // set APC command
@@ -86,27 +83,6 @@ const unsigned char uc1617s_12896_initbuf[] PROGMEM = {
       0xd7, // gray shade set
       0xaf // set display enable
 };
-
-const unsigned char oled64x128_initbuf[] PROGMEM ={
-0x00, 0xae, 0xd5, 0x51, 0x20, 0xa8, 0x3f, 0xdc, 0x00, 0xd3, 0x60, 0xad, 0x80, 0xa6, 0xa4, 0xa0, 0xc0, 0x81, 0x40, 0xd9, 0x22, 0xdb, 0x35, 0xaf
-};
-
-const unsigned char oled64_initbuf[] PROGMEM ={0x00,0xae,0xa8,0x3f,0xd3,0x00,0x40,0xa1,0xc8,
-      0xda,0x12,0x81,0xff,0xa4,0xa6,0xd5,0x80,0x8d,0x14,
-      0xaf,0x20,0x02};
-
-const unsigned char oled32_initbuf[] PROGMEM  = {
-0x00,0xae,0xd5,0x80,0xa8,0x1f,0xd3,0x00,0x40,0x8d,0x14,0xa1,0xc8,0xda,0x02,
-0x81,0x7f,0xd9,0xf1,0xdb,0x40,0xa4,0xa6,0xaf};
-
-const unsigned char oled72_initbuf[] PROGMEM ={0x00,0xae,0xa8,0x3f,0xd3,0x00,0x40,0xa1,0xc8,
-      0xda,0x12,0x81,0xff,0xad,0x30,0xd9,0xf1,0xa4,0xa6,0xd5,0x80,0x8d,0x14,
-      0xaf,0x20,0x02};
-
-const unsigned char uc1701_initbuf[] PROGMEM  = {0xe2, 0x40, 0xa0, 0xc8, 0xa2, 0x2c, 0x2e, 0x2f, 0xf8, 0x00, 0x23, 0x81, 0x28, 0xac, 0x00, 0xa6};
-
-const unsigned char hx1230_initbuf[] PROGMEM  = {0x2f, 0x90, 0xa6, 0xa4, 0xaf, 0x40, 0xb0, 0x10, 0x00};
-const unsigned char nokia5110_initbuf[] PROGMEM  = {0x21, 0xa4, 0xb1, 0x04,0x14,0x20,0x0c};
 
 static void tbdCachedFlush(TBDISP *pTBD, int bRender);
 static void tbdCachedWrite(TBDISP *pTBD, uint8_t *pData, uint8_t u8Len, int bRender);
@@ -185,7 +161,6 @@ uint8_t ucCMD;
     ucCMD = (bOn) ? 0xaf : 0xae;
     tbdWriteCommand(pTBD, ucCMD);
 } /* tbdPower() */
-#if !defined( _LINUX_ )
 
 // Controls the LED backlight
 void tbdBacklight(TBDISP *pTBD, int bOn)
@@ -197,49 +172,12 @@ void tbdBacklight(TBDISP *pTBD, int bOn)
 } /* tbdBacklight() */
 
 //
-// Send the command sequence to power up the LCDs
-static void LCDPowerUp(TBDISP *pTBD)
-{
-    int iLen;
-    uint8_t *s, uc[32];
-    tbdSetDCMode(pTBD, MODE_COMMAND);
-    digitalWrite(pTBD->iCSPin, LOW);
-    if (pTBD->type == LCD_UC1701 || pTBD->type == LCD_UC1609)
-    {
-        s = (uint8_t *)uc1701_initbuf;
-        iLen = sizeof(uc1701_initbuf);
-    }
-    else if (pTBD->type == LCD_HX1230)
-    {
-        s = (uint8_t *)hx1230_initbuf;
-        iLen = sizeof(hx1230_initbuf);
-    }
-    else // Nokia 5110
-    {
-        s = (uint8_t *)nokia5110_initbuf;
-        iLen = sizeof(nokia5110_initbuf);
-    }
-    memcpy_P(uc, s, iLen);
-    if (pTBD->iMOSIPin == 0xff)
-       SPI.transfer(s, iLen);
-    else
-       SPI_BitBang(pTBD, s, iLen, pTBD->iMOSIPin, pTBD->iCLKPin);
-    delay(100);
-    tbdWriteCommand(pTBD, 0xa5);
-    delay(100);
-    tbdWriteCommand(pTBD, 0xa4);
-    tbdWriteCommand(pTBD, 0xaf);
-    digitalWrite(pTBD->iCSPin, HIGH);
-    tbdSetDCMode(pTBD, MODE_DATA);
-} /* LCDPowerUp() */
-
-//
 // Initialize the display controller on an SPI bus
 //
 void tbdSPIInit(TBDISP *pTBD, int iType, int iDC, int iCS, int iReset, int iMOSI, int iCLK, int iLED, int bFlip, int bInvert, int bBitBang, int32_t iSpeed)
 {
-uint8_t uc[32], *s;
-int iLen;
+uint8_t uc[32], *s=NULL;
+int iLen=0;
 
   pTBD->ucScreen = NULL; // start with no backbuffer; user must provide one later
   pTBD->iDCPin = iDC;
@@ -278,152 +216,44 @@ int iLen;
 // Initialize SPI
     if (!bBitBang) {
         pTBD->iMOSIPin = 0xff; // mark it as hardware SPI
+#ifdef _LINUX_
+	pTBD->bbi2c.file_i2c = AIOOpenSPI(SPI_BUS_NUMBER, iSpeed);
+#else
         SPI.begin();
         SPI.beginTransaction(SPISettings(iSpeed, MSBFIRST, SPI_MODE0));
-        //  SPI.setClockDivider(16);
+#endif
+	//  SPI.setClockDivider(16);
         //  SPI.setBitOrder(MSBFIRST);
         //  SPI.setDataMode(SPI_MODE0);
     }
 
-  pTBD->width = 128; // assume 128x64
-  pTBD->height = 64;
-  if (iType == SHARP_144x168)
+  pTBD->width = 128; // assume 128x128
+  pTBD->height = 128;
+  if (iType == LCD_UC1617S_128128)
   {
-      pTBD->width = 144;
-      pTBD->height = 168;
-      pTBD->iDCPin = 0xff; // no D/C wire on this display
+	s = (uint8_t *)uc1617s_128128_initbuf;
+	iLen = sizeof(uc1617s_128128_initbuf);
   }
-  else if (iType == SHARP_400x240)
+  else if (iType == LCD_UC1617S_12896)
   {
-      pTBD->width = 400;
-      pTBD->height = 240;
-      pTBD->iDCPin = 0xff; // no D/C wire on this display
+	pTBD->width = 96;
+	s = (uint8_t *)uc1617s_12896_initbuf;
+	iLen = sizeof(uc1617s_12896_initbuf);
   }
-  else if (iType == LCD_UC1609)
-  {
-      pTBD->width = 192;
-      pTBD->height = 64;
-  }
-  else if (iType == LCD_HX1230)
-  {
-      pTBD->width = 96;
-      pTBD->height = 68;
-      pTBD->iDCPin = 0xff; // flag this as being 3-wire SPI
-  }
-  else if (iType == LCD_NOKIA5110)
-  {
-      pTBD->width = 84;
-      pTBD->height = 48;
-  }
-  else if (iType == OLED_96x16)
-  {
-    pTBD->width = 96;
-    pTBD->height = 16;
-  }
-  else if (iType == OLED_64x128)
-  {
-    pTBD->width = 64;
-    pTBD->height = 128;
-  }
-  else if (iType == OLED_128x32)
-    pTBD->height = 32;
-  else if (iType == OLED_128x128)
-    pTBD->height = 128;
-  else if (iType == OLED_64x32)
-  {
-    pTBD->width = 64;
-    pTBD->height = 32;
-  }
-  else if (iType == OLED_72x40)
-  {
-    pTBD->width = 72;
-    pTBD->height = 40;
-  }
-  if (iType == OLED_128x32 || iType == OLED_96x16)
-  {
-     s = (uint8_t *)oled32_initbuf;
-     iLen = sizeof(oled32_initbuf);
-  }
-  else if (iType == OLED_64x128)
-  {
-     s = (uint8_t *)oled64x128_initbuf;
-     iLen = sizeof(oled64x128_initbuf);
-  }
-  else if (iType == OLED_128x128)
-  {
-     s = (uint8_t *)oled128_initbuf;
-     iLen = sizeof(oled128_initbuf);
-  }
-  else if (iType < LCD_UC1701)
-  {
-     s = (uint8_t *)oled64_initbuf;
-     iLen = sizeof(oled64_initbuf);
-  }
-    // OLED
-  if (iType < LCD_UC1701)
-  {
       memcpy_P(uc, s, iLen); // do it from RAM
-      _I2CWrite(pTBD, s, iLen);
+      _I2CWrite(pTBD, uc, iLen);
 
       if (bInvert)
       {
-        uc[0] = 0; // command
-        uc[1] = 0xa7; // invert command
-        _I2CWrite(pTBD, uc, 2);
+	  tbdWriteCommand(pTBD, 0xa7);
       }
       if (bFlip) // rotate display 180
       {
-        uc[0] = 0; // command
-        uc[1] = 0xa0;
-        _I2CWrite(pTBD, uc, 2);
-        uc[0] = 0;
-        uc[1] = 0xc0;
-        _I2CWrite(pTBD, uc, 2);
+	  tbdWriteCommand(pTBD, 0xa0);
+	  tbdWriteCommand(pTBD, 0xc0);
+	  pTBD->flip = 1;
       }
-  } // OLED
-  if (iType == LCD_UC1701 || iType == LCD_HX1230)
-  {
-      uint8_t cCOM = 0xc0;
-      
-      LCDPowerUp(pTBD);
-      if (iType == LCD_HX1230)
-      {
-          tbdSetContrast(pTBD, 0); // contrast of 0 looks good
-          cCOM = 0xc8;
-      }
-      if (bFlip) // flip horizontal + vertical
-      {
-         tbdWriteCommand(pTBD, 0xa1); // set SEG direction (A1 to flip horizontal)
-         tbdWriteCommand(pTBD, cCOM); // set COM direction (C0 to flip vert)
-      }
-      if (bInvert)
-      {
-         tbdWriteCommand(pTBD, 0xa7); // set inverted pixel mode
-      }
-  }
-  if (iType == LCD_UC1609)
-  {
-      tbdWriteCommand(pTBD, 0xe2); // system reset
-      tbdWriteCommand(pTBD, 0xa0); // set frame rate to 76fps
-      tbdWriteCommand(pTBD, 0xeb); // set BR
-      tbdWriteCommand(pTBD, 0x2f); // set Power Control
-      tbdWriteCommand(pTBD, 0xc4); // set LCD mapping control
-      tbdWriteCommand(pTBD, 0x81); // set PM
-      tbdWriteCommand(pTBD, 0x90); // set contrast to 144
-      tbdWriteCommand(pTBD, 0xaf); // display enable
-      if (bFlip) // flip horizontal + vertical
-      {  
-         tbdWriteCommand(pTBD, 0xa1); // set SEG direction (A1 to flip horizontal)
-         tbdWriteCommand(pTBD, 0xc2); // set COM direction (C0 to flip vert)
-      }
-      if (bInvert)
-      {
-         tbdWriteCommand(pTBD, 0xa7); // set inverted pixel mode
-      }
-
-  }
 } /* tbdSPIInit() */
-#endif
 //
 // Initializes the OLED controller into "page mode"
 //
@@ -487,114 +317,6 @@ int rc = OLED_NOT_FOUND;
         _I2CWrite(pTBD, uc, 1);
       }
     return LCD_OK;
-  }
-  // find the device address if requested
-  if (iAddr == -1 || iAddr == 0 || iAddr == 0xff) // find it
-  {
-    I2CTest(&pTBD->bbi2c, 0x3c);
-    if (I2CTest(&pTBD->bbi2c, 0x3c))
-       pTBD->oled_addr = 0x3c;
-    else if (I2CTest(&pTBD->bbi2c, 0x3d))
-       pTBD->oled_addr = 0x3d;
-    else
-       return rc; // no display found!
-  }
-  else
-  {
-    pTBD->oled_addr = iAddr;
-    I2CTest(&pTBD->bbi2c, iAddr);
-    if (!I2CTest(&pTBD->bbi2c, iAddr))
-       return rc; // no display found
-  }
-  // Detect the display controller (SSD1306, SH1107 or SH1106)
-  uint8_t u = 0;
-  I2CReadRegister(&pTBD->bbi2c, pTBD->oled_addr, 0x00, &u, 1); // read the status register
-  u &= 0x0f; // mask off power on/off bit
-  if ((u == 0x7 || u == 0xf) && pTBD->type == OLED_128x128) // SH1107
-  { // A single SSD1306 display returned 7, so only act on it if the
-    // user specified that they're working with a 128x128 display
-    rc = OLED_SH1107_3C;
-    bFlip = !bFlip; // SH1107 seems to have this reversed from the usual direction
-  }
-  else if (u == 0x8) // SH1106
-  {
-    rc = OLED_SH1106_3C;
-    pTBD->type = OLED_132x64; // needs to be treated a little differently
-  }
-  else if (u == 3 || u == 6 || u == 7) // 7=128x64(rare),6=128x64 display, 3=smaller
-  {
-    rc = OLED_SSD1306_3C;
-  }
-  if (pTBD->oled_addr == 0x3d)
-     rc++; // return the '3D' version of the type
-
-  if (iType == OLED_128x32 || iType == OLED_96x16)
-  {
-      s = (uint8_t *)oled32_initbuf;
-      u8Len = sizeof(oled32_initbuf);
-  }
-  else if (iType == OLED_128x128)
-  {
-      s = (uint8_t *)oled128_initbuf;
-      u8Len = sizeof(oled128_initbuf);
-  }
-  else if (iType == OLED_72x40)
-  {
-      s = (uint8_t *)oled72_initbuf;
-      u8Len = sizeof(oled72_initbuf);
-  }
-  else if (iType == OLED_64x128)
-  {
-      s = (uint8_t *)oled64x128_initbuf;
-      u8Len = sizeof(oled64x128_initbuf);
-  }
-  else // 132x64, 128x64 and 64x32
-  {
-      s = (uint8_t *)oled64_initbuf;
-      u8Len = sizeof(oled64_initbuf);
-  }
-
-    memcpy_P(uc, s, u8Len);
-  _I2CWrite(pTBD, uc, u8Len);
-  if (bInvert)
-  {
-    uc[0] = 0; // command
-    uc[1] = 0xa7; // invert command
-    _I2CWrite(pTBD,uc, 2);
-  }
-  if (bFlip) // rotate display 180
-  {
-    uc[0] = 0; // command
-    uc[1] = 0xa0;
-    _I2CWrite(pTBD,uc, 2);
-    uc[1] = 0xc0;
-    _I2CWrite(pTBD,uc, 2);
-  }
-  pTBD->width = 128; // assume 128x64
-  pTBD->height = 64;
-  if (iType == OLED_96x16)
-  {
-    pTBD->width = 96;
-    pTBD->height = 16;
-  }
-  else if (iType == OLED_64x128)
-  {
-    pTBD->width = 64;
-    pTBD->height = 128;
-  }
-  else if (iType == OLED_128x32)
-    pTBD->height = 32;
-  else if (iType == OLED_128x128)
-    pTBD->height = 128;
-  else if (iType == OLED_64x32)
-  {
-    pTBD->width = 64;
-    pTBD->height = 32;
-  }
-  else if (iType == OLED_72x40)
-  {
-    pTBD->width = 72;
-    pTBD->height = 40;
   }
   return rc;
 } /* tbdInit() */
