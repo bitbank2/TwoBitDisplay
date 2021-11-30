@@ -264,11 +264,9 @@ void tbdSetFlip(TBDISP *pTBD, int iOnOff)
    pTBD->flip = iOnOff;
    if (iOnOff) // rotate display 180
    {
-      tbdWriteCommand(pTBD, 0xa1); // SEG direction (A1 to flip horizontal)
-      tbdWriteCommand(pTBD, 0xc0); // COM direction (C0 to flip vert)
+      tbdWriteCommand(pTBD, 0xc6); // mirror X+Y
    } else { // non-rotated
-      tbdWriteCommand(pTBD, 0xa0);
-      tbdWriteCommand(pTBD, 0xc8);
+      tbdWriteCommand(pTBD, 0xc0); // no mirror
    }
 } /* tbdSetFlip() */
 

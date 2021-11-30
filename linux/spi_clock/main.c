@@ -210,12 +210,12 @@ struct sigaction sigIntHandler;
        if (iAccelType != -1) {
 	  int X, Y, Z;
           accelReadAValues(&X, &Y, &Z);
-	  if (Y > 8000 && bFlip != 1) {
-		  tbdSetFlip(&tbd, 1);
-		  bFlip = 1;
-	  } else if (Y < -8000 && bFlip != 0) {
+	  if (Y > 8000 && bFlip != 0) {
 		  tbdSetFlip(&tbd, 0);
 		  bFlip = 0;
+	  } else if (Y < -8000 && bFlip != 1) {
+		  tbdSetFlip(&tbd, 1);
+		  bFlip = 1;
 	  }
        }
        tbdDumpBuffer(&tbd, NULL);
