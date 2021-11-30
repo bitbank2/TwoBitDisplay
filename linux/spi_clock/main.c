@@ -39,7 +39,7 @@ volatile int iStop = 0;
 TBDISP tbd;
 static uint8_t ucBuffer[4096];
 struct tm thetime;
-int bFlip = 0; // keeps track of 0/180 degree display orientation
+int bFlip = 1; // keeps track of 0/180 degree display orientation
 static int iAccelType=-1;
 char szCurlBuffer[500];
 int iCurlSize;
