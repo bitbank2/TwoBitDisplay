@@ -255,6 +255,24 @@ int iLen=0;
       }
 } /* tbdSPIInit() */
 //
+// Set the memory configuration to display the pixels at 0 or 180 degrees (flipped)
+// Pass true (1) to flip 180, false (0) to set to 0
+//
+void tbdSetFlip(TBDISP *pTBD, int iOnOff)
+{
+   if (pTBD == NULL) return;
+   pTBD->flip = iOnOff;
+   if (iOnOff) // rotate display 180
+   {
+      tbdWriteCommand(pTBD, 0xa1); // SEG direction (A1 to flip horizontal)
+      tbdWriteCommand(pTBD, 0xc0); // COM direction (C0 to flip vert)
+   } else { // non-rotated
+      tbdWriteCommand(pTBD, 0xa0);
+      tbdWriteCommand(pTBD, 0xc8);
+   }
+} /* tbdSetFlip() */
+
+//
 // Initializes the OLED controller into "page mode"
 //
 int tbdI2CInit(TBDISP *pTBD, int iType, int iAddr, int bFlip, int bInvert, int bWire, int sda, int scl, int reset, int32_t iSpeed)

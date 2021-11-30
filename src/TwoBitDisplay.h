@@ -135,6 +135,11 @@ enum {
   LCD_ERROR
 };
 //
+// Set the memory configuration to display pixels at 0 or 180 degrees (flipped)
+// pass true(1) to flip 180, false (0) to set to 0
+//
+void tbdSetFlip(TBDISP *pTBD, int iOnOff);
+//
 // Create a virtual display of any size
 // The memory buffer must be provided at the time of creation
 //
