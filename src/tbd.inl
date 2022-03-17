@@ -23,6 +23,24 @@ static void pinMode(int iPin, int iMode)
 void tbdSetDCMode(TBDISP *pTBD, int iMode);
 void InvertBytes(uint8_t *pData, uint8_t bLen);
 void SPI_BitBang(TBDISP *pTBD, uint8_t *pData, int iLen, uint8_t iMOSIPin, uint8_t iSCKPin);
+// Table to convert a group of 4 1-bit pixels to a 2-bit gray level
+const uint8_t ucGray2BPP[256] PROGMEM =
+{   0x00,0x01,0x01,0x02,0x04,0x05,0x05,0x06,0x04,0x05,0x05,0x06,0x08,0x09,0x09,0x0a,
+0x01,0x02,0x02,0x02,0x05,0x06,0x06,0x06,0x05,0x06,0x06,0x06,0x09,0x0a,0x0a,0x0a,
+0x01,0x02,0x02,0x02,0x05,0x06,0x06,0x06,0x05,0x06,0x06,0x06,0x09,0x0a,0x0a,0x0a,
+0x02,0x02,0x02,0x03,0x06,0x06,0x06,0x07,0x06,0x06,0x06,0x07,0x0a,0x0a,0x0a,0x0b,
+0x04,0x05,0x05,0x06,0x08,0x09,0x09,0x0a,0x08,0x09,0x09,0x0a,0x08,0x09,0x09,0x0a,
+0x05,0x06,0x06,0x06,0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,
+0x05,0x06,0x06,0x06,0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,
+0x06,0x06,0x06,0x07,0x0a,0x0a,0x0a,0x0b,0x0a,0x0a,0x0a,0x0b,0x0a,0x0a,0x0a,0x0b,
+0x04,0x05,0x05,0x06,0x08,0x09,0x09,0x0a,0x08,0x09,0x09,0x0a,0x08,0x09,0x09,0x0a,
+0x05,0x06,0x06,0x06,0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,
+0x05,0x06,0x06,0x06,0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,
+0x06,0x06,0x06,0x07,0x0a,0x0a,0x0a,0x0b,0x0a,0x0a,0x0a,0x0b,0x0a,0x0a,0x0a,0x0b,
+0x08,0x09,0x09,0x0a,0x08,0x09,0x09,0x0a,0x08,0x09,0x09,0x0a,0x0c,0x0d,0x0d,0x0e,
+0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,0x0d,0x0e,0x0e,0x0e,
+0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,0x09,0x0a,0x0a,0x0a,0x0d,0x0e,0x0e,0x0e,
+0x0a,0x0a,0x0a,0x0b,0x0a,0x0a,0x0a,0x0b,0x0a,0x0a,0x0a,0x0b,0x0e,0x0e,0x0e,0x0f};
 
 const uint8_t ucMirror[256] PROGMEM =
      {0, 128, 64, 192, 32, 160, 96, 224, 16, 144, 80, 208, 48, 176, 112, 240,
@@ -1606,8 +1624,14 @@ GFXfont font;
 GFXglyph glyph, *pGlyph;
 int iPitch;
    
-   if (pTBD == NULL || pFont == NULL || pTBD->ucScreen == NULL || x < 0)
+   if (pTBD == NULL || pFont == NULL || pTBD->ucScreen == NULL)
       return -1;
+    if (x == -1)
+        x = pTBD->iCursorX;
+    if (y == -1)
+        y = pTBD->iCursorY;
+    if (x < 0)
+        return -1;
    iPitch = pTBD->width;
    // in case of running on AVR, get copy of data from FLASH
    memcpy_P(&font, pFont, sizeof(font));
@@ -1659,7 +1683,7 @@ int iPitch;
                   d = &pTBD->ucScreen[(ty >> 2) * iPitch + dx]; // internal buffer dest
                }
             } // if we ran out of bits
-            if (uc & 0x80) { // set pixel
+            if (uc & 0x80 && (tx+dx) < pTBD->width) { // set pixel
                 d[tx] &= ~ucMask;
                 d[tx] |= ucClr;
             }
@@ -1669,8 +1693,141 @@ int iPitch;
       } // for y
       x += pGlyph->xAdvance; // width of this character
    } // while drawing characters
+   pTBD->iCursorX = x;
+   pTBD->iCursorY = y;
    return 0;
 } /* tbdWriteStringCustom() */
+//
+// Width is the doubled pixel width
+// Convert 1-bpp into 2-bit grayscale
+//
+static void Scale2Gray(uint8_t *source, int width, int iPitch)
+{
+    int x;
+    uint8_t ucPixels, c, d, *dest;
+
+    dest = source; // write the new pixels over the old to save memory
+
+    for (x=0; x<width/8; x+=2) /* Convert a pair of lines to gray */
+    {
+        c = source[x];  // first 4x2 block
+        d = source[x+iPitch];
+        /* two lines of 8 pixels are converted to one line of 4 pixels */
+        ucPixels = (ucGray2BPP[(unsigned char)((c & 0xf0) | (d >> 4))] << 4);
+        ucPixels |= (ucGray2BPP[(unsigned char)((c << 4) | (d & 0x0f))]);
+        *dest++ = ucPixels;
+        c = source[x+1];  // next 4x2 block
+        d = source[x+iPitch+1];
+        ucPixels = (ucGray2BPP[(unsigned char)((c & 0xf0) | (d >> 4))])<<4;
+        ucPixels |= ucGray2BPP[(unsigned char)((c << 4) | (d & 0x0f))];
+        *dest++ = ucPixels;
+    }
+    if (width & 4) // 2 more pixels to do
+    {
+        c = source[x];
+        d = source[x + iPitch];
+        ucPixels = (ucGray2BPP[(unsigned char) ((c & 0xf0) | (d >> 4))]) << 4;
+        ucPixels |= (ucGray2BPP[(unsigned char) ((c << 4) | (d & 0x0f))]);
+        dest[0] = ucPixels;
+    }
+} /* Scale2Gray() */
+
+//
+// Draw a string of characters in a custom font antialiased
+// at 1/2 its original size
+// A back buffer must be defined
+//
+int tbdWriteStringAntialias(TBDISP *pTBD, GFXfont *pFont, int x, int y, char *szMsg)
+{
+int i, end_y, dx, dy, tx, ty, c, iBitOff;
+uint8_t *s, *d, bits, ucMask, ucClr, uc;
+GFXfont font;
+GFXglyph glyph, *pGlyph;
+int iPitch;
+uint8_t ucTemp[64]; // enough space for a 256 pixel wide font
+    
+   if (pTBD == NULL || pFont == NULL || pTBD->ucScreen == NULL)
+      return -1;
+   iPitch = pTBD->width;
+    if (x == -1)
+        x = pTBD->iCursorX;
+    if (y == -1)
+        y = pTBD->iCursorY;
+    if (x < 0)
+        return -1;
+   // in case of running on AVR, get copy of data from FLASH
+   memcpy_P(&font, pFont, sizeof(font));
+   pGlyph = &glyph;
+
+   i = 0;
+   while (szMsg[i] && x < pTBD->width)
+   {
+      c = szMsg[i++];
+      if (c < font.first || c > font.last) // undefined character
+         continue; // skip it
+      c -= font.first; // first char of font defined
+      memcpy_P(&glyph, &font.glyph[c], sizeof(glyph));
+//      dx = x + pGlyph->xOffset; // offset from character UL to start drawing
+      dy = y + (pGlyph->yOffset/2);
+      s = font.bitmap + pGlyph->bitmapOffset; // start of bitmap data
+      // Bitmap drawing loop. Image is MSB first and each pixel is packed next
+      // to the next (continuing on to the next character line)
+      iBitOff = 0; // bitmap offset (in bits)
+      bits = uc = 0; // bits left in this font byte
+//      end_y = dy + pGlyph->height;
+//      if (dy < 0) { // skip these lines
+//          iBitOff += (pGlyph->width * (-dy));
+//          dy = 0;
+//      }
+       memset(ucTemp, 0, sizeof(ucTemp));
+       for (ty=0; ty<pGlyph->height; ty++) {
+         d = &ucTemp[(ty & 1) * (sizeof(ucTemp)/2)]; // internal buffer dest
+         for (tx=0; tx<pGlyph->width; tx++) {
+            if (bits == 0) { // need to read more font data
+               uc = pgm_read_byte(&s[iBitOff>>3]); // get more font bitmap data
+               bits = 8;
+               iBitOff += bits;
+            } // if we ran out of bits
+            if (uc & 0x80) { // set the pixel
+                d[(tx>>3)] |= (0x80 >> (tx & 7));
+            }
+            bits--; // next bit
+            uc <<= 1;
+         } // for x
+           if ((ty & 1) || ty == pGlyph->height-1) {
+               uint8_t *pg, shift; // pointer to gray source pixels
+               int j;
+               dy = (y + (pGlyph->yOffset + ty - 1)/2);
+               if (dy < pTBD->height && dy >= 0) { // if visible
+                   // Convert this pair of lines to grayscale output
+                   Scale2Gray(ucTemp, pGlyph->width, sizeof(ucTemp)/2);
+                   // the Scale2Gray code writes the bits horizontally; crop and convert them for the internal memory format
+                   j = (pGlyph->width+1)/2;
+                   if (x+j > pTBD->width)
+                       j = pTBD->width - x;
+                   d = &pTBD->ucScreen[(dy>>2) * iPitch + x + (pGlyph->xOffset/2)];
+                   shift = (dy & 3)*2;
+                   ucMask = 3<<shift;
+                   shift = 6 - shift;
+                   pg = ucTemp;
+                   ucClr = *pg++;
+                   for (tx=0; tx<j; tx++) {
+                       d[tx] &= ~ucMask;
+                       d[tx] |= ((ucClr & 0xc0) >> shift);
+                       ucClr <<= 2;
+                       if ((tx & 3) == 3)
+                           ucClr = *pg++; // get 4 more pixels
+                   }
+               }
+               memset(ucTemp, 0, sizeof(ucTemp));
+           }
+      } // for y
+      x += pGlyph->xAdvance/2; // width of this character
+   } // while drawing characters
+    pTBD->iCursorX = x;
+    pTBD->iCursorY = y;
+   return 0;
+} /* tbdWriteStringAntialias() */
 
 //
 // Render a sprite/rectangle of pixels from a provided buffer to the display.

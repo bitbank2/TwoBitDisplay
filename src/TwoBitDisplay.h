@@ -20,8 +20,8 @@ typedef struct {
 typedef struct {
   uint8_t *bitmap;  ///< Glyph bitmaps, concatenated
   GFXglyph *glyph;  ///< Glyph array
-  uint8_t first;    ///< ASCII extents (first char)
-  uint8_t last;     ///< ASCII extents (last char)
+  uint16_t first;    ///< ASCII extents (first char)
+  uint16_t last;     ///< ASCII extents (last char)
   uint8_t yAdvance; ///< Newline distance (y axis)
 } GFXfont;
 #endif // _ADAFRUIT_GFX_H
@@ -233,6 +233,10 @@ int tbdScaledString(TBDISP *pTBD, int x, int y, char *szMsg, int iSize, int ucCo
 // Requires a back buffer
 //
 int tbdWriteStringCustom(TBDISP *pTBD, GFXfont *pFont, int x, int y, char *szMsg, uint8_t ucColor);
+//
+// Draw a string in a proportional font with antialiasing
+//
+int tbdWriteStringAntialias(TBDISP *pTBD, GFXfont *pFont, int x, int y, char *szMsg);
 //
 // Get the width of text in a custom font
 //
